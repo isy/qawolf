@@ -1,38 +1,72 @@
 import { logger } from "@qawolf/logger";
-import { sleep } from "@qawolf/web";
-import { spawn } from "child_process";
+import { waitUntil } from "@qawolf/web";
+import { ChildProcessWithoutNullStreams, spawn } from "child_process";
 import { pathExists } from "fs-extra";
+import { Size } from "./types";
 
-// TODO slack reminder to look into unclosed stuffs
-// TODO tests...
+interface ConstructorOptions {
+  display: number;
+  process: ChildProcessWithoutNullStreams;
+  timeoutMs?: number;
+}
 
 export class Xvfb {
   private _display: number;
   private _process: any;
+  private _timeoutMs: number;
 
-  protected constructor(options) {
+  protected constructor(options: ConstructorOptions) {
     this._display = options.display;
     this._process = options.process;
+    this._timeoutMs = options.timeoutMs || 30000;
+
+    logger.debug(`Xvfb: created ${this.display}`);
   }
 
-  public async start(args: string[] = []) {
-    const display = await getUnusedDisplay();
+  public static async startWithArgs(
+    args: string[] = [],
+    timeoutMs: number = 30000
+  ) {
+    try {
+      logger.debug(`Xvfb: start ${JSON.stringify(args)}`);
 
-    const process = spawn("Xvfb", [display.toString()].concat(args));
+      const display = await getUnusedDisplay();
 
-    process.stderr.on("data", data => {
-      logger.debug(`Xvfb: ${data.toString()}`);
-    });
+      const process = spawn("Xvfb", [display.toString()].concat(args));
 
-    let timeout = 30000;
+      process.stderr.on("data", data => {
+        logger.debug(`Xvfb: ${data.toString()}`);
+      });
 
-    while (!(await displayExists(display))) {
-      await sleep(50);
-      timeout -= 50;
-      if (timeout <= 0) throw new Error("Could not start Xvfb.");
+      await waitUntil(() => displayExists(display), timeoutMs);
+
+      return new Xvfb({ display, process, timeoutMs });
+    } catch (e) {
+      logger.error(`Display: could not start ${JSON.stringify(e)}`);
+      return null;
     }
+  }
 
-    return new Xvfb({ display, process });
+  public static async start(size: Size) {
+    return Xvfb.startWithArgs([
+      "-shmem",
+      "-screen",
+      "0",
+      `${size.width}x${size.height}x24`,
+      // do not listen on a unix socket to prevent
+      // "_XSERVTransmkdir: ERROR: euid != 0,directory /tmp/.X11-unix will not be created"
+      // https://phabricator.wikimedia.org/T202710
+      "-nolisten",
+      "unix"
+    ]);
+  }
+
+  public get display() {
+    return `:${this._display}`;
+  }
+
+  public get screen() {
+    return `${this.display}.0`;
   }
 
   public async stop() {
@@ -40,15 +74,15 @@ export class Xvfb {
       return;
     }
 
-    this._process.kill();
-    this._process = null;
+    try {
+      logger.debug(`Xvfb: stop`);
 
-    let timeout = 30000;
+      this._process.kill();
+      this._process = null;
 
-    while (await displayExists(this._display)) {
-      await sleep(50);
-      timeout -= 50;
-      if (timeout <= 0) throw new Error("Could not stop Xvfb.");
+      await waitUntil(() => !displayExists(this._display), this._timeoutMs);
+    } catch (e) {
+      throw new Error("Xvfb: could not stop");
     }
   }
 }

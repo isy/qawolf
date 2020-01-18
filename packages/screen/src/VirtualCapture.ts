@@ -3,9 +3,9 @@ import { isCI } from "@qawolf/ci-info";
 import { platform } from "os";
 import { join } from "path";
 import { createGif } from "./createGif";
-import { Display } from "./Display";
 import { Offset, Size } from "./types";
 import { VideoCapture, VideoCaptureOptions } from "./VideoCapture";
+import { Xvfb } from "./Xvfb";
 
 interface CreateOptions {
   offset: Offset;
@@ -39,7 +39,7 @@ export class VirtualCapture {
       width: videoSize.width + options.offset.x
     };
 
-    const display = await Display.start(displaySize);
+    const display = await Xvfb.start(displaySize);
     if (!display) return null;
 
     return new VirtualCapture({
